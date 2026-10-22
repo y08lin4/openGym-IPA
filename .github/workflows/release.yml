@@ -1,0 +1,192 @@
+name: release
+
+# dev/main push 触发：测试 → 共享 web 包 → iOS ∥ Android → 发 Release
+# dev  → v<版本>-dev.<run号>（prerelease）；main → v<版本>（正式，覆盖式）
+
+on:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    name: 定版本与渠道
+    runs-on: ubuntu-latest
+    outputs:
+      ver: ${{ steps.m.outputs.ver }}
+      tag: ${{ steps.m.outputs.tag }}
+      channel: ${{ steps.m.outputs.channel }}
+      prerelease: ${{ steps.m.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        run: |
+          set -euo pipefail
+          VER="$(node -p "require('./frontend/package.json').version")"
+          BUILD="$(sed -n 's/^ *versionCode \([0-9]*\).*/\1/p' frontend/android/app/build.gradle | sed -n 1p)"
+          CHANNEL="${GITHUB_REF_NAME}"
+          if [ "$CHANNEL" = "main" ]; then
+            TAG="v$VER"; PRE=false
+          else
+            TAG="v$VER-dev.$GITHUB_RUN_NUMBER"; PRE=true
+          fi
+          {
+            echo "ver=$VER"; echo "build=$BUILD"
+            echo "tag=$TAG"; echo "channel=$CHANNEL"; echo "prerelease=$PRE"
+          } >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG ver=$VER build=$BUILD prerelease=$PRE"
+
+  web:
+    name: 测试 + 移动端 Web 包（双端共享）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: 安装依赖
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: 前端测试（含二开补丁钉的媒体用例）
+        working-directory: frontend
+        run: npm test
+      - name: 构建移动 Web 包（lite：媒体不打入，运行时按配对地址拉）
+        working-directory: frontend
+        env: { VITE_MOBILE: "1" }
+        # 与上游 build:mobile 的差别：不调 stage-media（无媒体），媒体 base 由 media-origin 运行时解析
+        run: npx vite build && node scripts/check-mobile-bundle.mjs && npx cap sync
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: frontend/dist
+
+  ios:
+    name: iOS 未签名 IPA
+    needs: [meta, web]
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with: { name: web-dist, path: frontend/dist }
+      - name: CocoaPods
+        run: command -v pod >/dev/null 2>&1 || brew install cocoapods
+      - name: 同步进 iOS 工程并归档（无签名）
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npx cap sync ios
+          cd ios/App
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/App.xcarchive" \
+            MARKETING_VERSION="${{ needs.meta.outputs.ver }}" \
+            CURRENT_PROJECT_VERSION="${{ needs.meta.outputs.build }}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            archive | tail -40
+      - name: 打包 IPA + sha256
+        run: |
+          set -euo pipefail
+          TAG="${TAG#v}"; cd frontend/ios/App
+          rm -rf Payload && mkdir Payload
+          cp -R build/App.xcarchive/Products/Applications/App.app Payload/
+          zip -qry "$GITHUB_WORKSPACE/openGym-$TAG-ios.ipa" Payload
+          cd "$GITHUB_WORKSPACE"
+          shasum -a 256 "openGym-$TAG-ios.ipa" > "openGym-$TAG-ios.ipa.sha256"
+          ls -l openGym-*.ipa | awk '{print $9, $5}'
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: openGym-*.ipa*
+
+  android:
+    name: Android 签名 APK
+    needs: [meta, web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: actions/download-artifact@v4
+        with: { name: web-dist, path: frontend/dist }
+      - name: 装依赖并同步进 Android 工程
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx cap sync android
+      - name: Gradle 构建（release，未签名产物）
+        working-directory: frontend/android
+        run: ./gradlew assembleRelease --no-daemon -x lint
+      - name: zipalign + 开源 keystore 签名
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools"
+          V="$(ls "$BT" | sort -V | tail -1)"; echo "build-tools $V"
+          UNSIGNED="$(find frontend/android/app/build/outputs/apk/release -name '*-unsigned.apk' | head -1)"
+          [ -n "$UNSIGNED" ] || { echo "未找到 unsigned apk" >&2; find frontend/android/app/build/outputs -type f; exit 1; }
+          "$BT/$V/zipalign" -f -p 4 "$UNSIGNED" aligned.apk
+          "$BT/$V/apksigner" sign \
+            --ks ci/android-release.keystore \
+            --ks-key-alias opengym-lite \
+            --ks-pass pass:opengym-lite-public \
+            --key-pass pass:opengym-lite-public \
+            --out "openGym-${TAG#v}-android.apk" aligned.apk
+          "$BT/$V/apksigner" verify --print-certs "openGym-${TAG#v}-android.apk" | head -5
+          sha256sum "openGym-${TAG#v}-android.apk" > "openGym-${TAG#v}-android.apk.sha256"
+          ls -l openGym-*.apk
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: openGym-*.apk*
+
+  release:
+    name: 发 Release
+    needs: [meta, ios, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: ios-ipa }
+      - uses: actions/download-artifact@v4
+        with: { name: android-apk }
+      - name: 生成说明
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.meta.outputs.tag }}"
+          cat > body.md <<EOF
+          openGym **$TAG** 二开 lite 版（渠道：${{ needs.meta.outputs.channel }}）：包内不携带 6554 个动作演示媒体（约 190MB），配对服务器后按需拉取（实测单动作 图~5KB+视频~25KB，SW 30MB LRU 缓存，课表预取）。
+
+          | 文件 | 装法 |
+          |---|---|
+          | \`openGym-<ver>-android.apk\` | 直接下载安装（开源 keystore 签名，见仓库 README） |
+          | \`openGym-<ver>-ios.ipa\` | 未签名：AltStore / Sideloadly / ESign 自签，或 TrollStore 直装 |
+
+          装好后：打开 App → 选「连接服务器」→ 在已登录网页 设置→账户→「配对手持设备」取配对码 → 填服务器地址+配对码。
+          服务器要求：官方 openGym 镜像自带全部媒体；**媒体 location 的 CORP 头需为 cross-origin**（见 README「服务器配套」）。
+
+          校验：\`sha256sum -c *.sha256\`；构建 commit \`${GITHUB_SHA}\`；上游基线 v${{ needs.meta.outputs.ver }}。
+          EOF
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: openGym ${{ needs.meta.outputs.tag }}（lite 双端）
+          body_path: body.md
+          prerelease: ${{ needs.meta.outputs.prerelease == 'true' }}
+          files: openGym-*
+          overwrite_files: true

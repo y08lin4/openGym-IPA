@@ -1,0 +1,70 @@
+name: sync-upstream
+
+# 每天检查上游 openGym 是否有新 Release：
+#   有 → 更新 upstream 分支 → merge 进 dev（冲突策略 -X ours，我们的 README/LICENSE 恒胜）
+#        → 推 dev → 手动 dispatch release.yml（GitHub token 的 push 不会自动触发）
+#   冲突 → merge --abort，开 issue 报信，不推不动。
+# 注：schedule 只在默认分支（main）上生效；本文件随 dev→main 晋升后自动开始工作。
+
+on:
+  schedule:
+    - cron: "43 7 * * *" # 每天 15:43 北京时间
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: 跟进上游新版本
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: dev
+
+      - name: fetch 上游并合入 dev
+        run: |
+          set -euo pipefail
+          # 从 checkout 注入的凭据头里取本次运行的 API token（避免显式 env 依赖）
+          TOKEN=$(git config --get 'http.https://github.com/.extraheader' | awk '{print $2}' | base64 -d | cut -d: -f2-)
+          export GH_TOKEN="$TOKEN"
+          git config user.name "openGym-lite-sync[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/DuarteSantos8/openGym.git
+
+          LATEST=$(curl -fsS "https://api.github.com/repos/DuarteSantos8/openGym/releases/latest" | jq -r .tag_name)
+          echo "上游最新 Release: $LATEST"
+          git fetch upstream "+refs/tags/$LATEST:refs/upstream/$LATEST"
+          UP=$(git rev-parse "refs/upstream/$LATEST^{commit}")
+
+          if [ "$(git rev-parse -q --verify refs/heads/upstream || echo none)" = "$UP" ]; then
+            echo "upstream 分支已是 $LATEST，无事可做"
+            exit 0
+          fi
+          git branch -f upstream "$UP"
+          git push origin upstream
+          echo "upstream 分支已快进到 $LATEST"
+
+          OURS=$(node -p "require('./frontend/package.json').version")
+          if [ "${LATEST#v}" = "$OURS" ]; then
+            echo "dev 已包含 $LATEST（版本一致），结束"
+            exit 0
+          fi
+
+          if git merge -X ours -m "sync: upstream $LATEST" "$UP"; then
+            git push origin dev
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $TOKEN" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/dispatches" \
+              -d '{"ref":"dev"}'
+            echo "已合入 $LATEST 并触发 dev 构建"
+          else
+            git merge --abort
+            gh issue create --title "sync: 上游 $LATEST 与二开 patch 冲突" \
+              --body "自动合并失败。人工处理：\`git fetch upstream && git merge $UP\`（策略 -X ours，冲突多为 patch 触点漂移）。" \
+              --label bug || true
+            echo "::error::上游 $LATEST 合并冲突，已开 issue"
+            exit 1
+          fi

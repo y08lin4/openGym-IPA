@@ -1,70 +1,53 @@
-# openGym-IPA
+# openGym-lite
 
-用 **GitHub Actions** 每天自动从上游 [DuarteSantos8/openGym](https://github.com/DuarteSantos8/openGym)
-构建 **未签名 iOS 安装包（`openGym-x.y.z-unsigned.ipa`）**，并发布到本仓库的
-[Releases](../../releases)。
+[上游 openGym](https://github.com/DuarteSantos8/openGym)（自托管健身记录，AGPL-3.0）的**二开 lite 客户端发行仓库**：包内不再携带 6554 个动作演示媒体（约 190MB，这正是官方 APK/IPA 要 200MB 的原因），配对服务器后**按需拉取 + 动态缓存**。产物是 **Android 签名 APK + iOS 未签名 IPA**，各约 10MB。
 
-[![Build iOS IPA](https://github.com/y08lin4/openGym-IPA/actions/workflows/build-ipa.yml/badge.svg)](https://github.com/y08lin4/openGym-IPA/actions/workflows/build-ipa.yml)
-
-## 背景
-
-[openGym](https://github.com/DuarteSantos8/openGym) 是自托管的健身/自重训练记录应用（网页 + 移动端）。
-官方发布 Android APK，但 **iOS 没有官方 IPA 下载**：上游的 `build:ios` CI 任务需要自建 Mac runner，
-GitLab 免费档跑不了 macOS。本仓库做的事就是把同一个官方构建流程搬到 GitHub Actions 的 macOS
-托管 runner 上（公开仓库免费），产出上游文档
-[docs/MOBILE.md](https://github.com/DuarteSantos8/openGym/blob/main/docs/MOBILE.md#iphone--whats-actually-possible)
-里为 AltStore / Sideloadly 用户描述的未签名 IPA。
-
-构建内容与上游完全一致：上游自带的 Capacitor iOS 工程（bundle id `ch.duartesantos.opengym`），
-`VITE_MOBILE=1` 移动构建，`xcodebuild` 归档时不带签名身份（`CODE_SIGNING_ALLOWED=NO`）。
+[![release](https://github.com/y08lin4/openGym-lite/actions/workflows/release.yml/badge.svg?branch=dev)](https://github.com/y08lin4/openGym-lite/actions/workflows/release.yml)
 
 ## 怎么用
 
-1. 到 [Releases](../../releases) 下载 `openGym-<版本>-unsigned.ipa`（建议顺手核对 `.sha256`）。
-2. 用下面任一**免费**方式签名安装（未签名 IPA 无法直接安装）。
-3. 打开 App，首次启动选模式：
-   - **本地模式**：免注册，数据存手机端；
-   - **连接自己的服务器**：在你已登录的 openGym 网页端 → 设置 → 账户 → 「配对手持设备」
-     生成一次性配对码（5 分钟有效），在 App 里输入服务器地址 + 配对码。App 内用配对令牌，
-     **不需要 passkey**（详见上游 MOBILE.md）。
+1. 从 [Releases](../../releases) 下载对应平台的包：
+   - **Android**：APK 用[开源 keystore](ci/android-release.keystore)（别名/密码 `opengym-lite` / `opengym-lite-public`）签名，浏览器下载后直接安装；
+   - **iOS**：IPA 未签名，用 **AltStore / Sideloadly**（免费 Apple ID，7 天）重签安装，或 TrollStore（受限 iOS 版本）直装、ESign 自签。
+2. 打开 App → 选「连接服务器」→ 在已登录的 openGym 网页 **设置 → 账户 → 配对手持设备** 生成一次性配对码 → 在 App 填服务器地址 + 配对码。
+3. 动作演示在第一次看到时自动从你的服务器拉取（图 ~5KB、视频 ~25KB），Service Worker 缓存（30MB LRU），课表内动作会预取（并发 2）。App 内登录走配对令牌，不需要 passkey。
 
-### 安装方法
+## 服务器配套（一次性）
 
-| 方式 | 适合 | 说明 |
+- 官方 openGym Docker 镜像**自带全部媒体**并已在 `/exercise-media/` 提供服务，无需额外部署；建议服务端版本与客户端同代（`GET /api/config` 返回 404 说明太旧）。
+- **必须改一行 nginx**：媒体 location 的 CORP 头从 `same-origin` 改为 `cross-origin`（官方模板按"手机自带媒体"设计写死了同源，lite 客户端是跨源取用，iOS/Android 新版内核都会拦截）。`web/nginx.conf.template` 两处 `add_header Cross-Origin-Resource-Policy "same-origin"` → `"cross-origin"`，重建/重启 web 容器即可；自查：
+
+  ```sh
+  curl -sI https://你的服务器/exercise-media/still/5986.webp | grep -i cross-origin
+  # 期望：Cross-Origin-Resource-Policy: cross-origin
+  ```
+
+## 分支模型与发布流
+
+| 分支 | 内容 | 构建 |
 |---|---|---|
-| **Sideloadly**（Windows/Mac） | 大多数人 | 用免费 Apple ID 签名安装；免费账号签出的 App 7 天有效、同时最多 3 个 App，到期用同一工具点一次刷新即可 |
-| **AltStore / AltServer**（需一台 Mac 或 PC 常开） | 想全自动续期 | 自动在 Wi-Fi 下每 3 天帮你刷新签名 |
-| **TrollStore** | iOS 14.0–16.6.1（及部分 17.0）机型 | 免签名、永久有效、不占免费签名名额，最省事（看你的 iOS 版本是否支持） |
-| **ESign**（iPhone 上直接签） | 无电脑 | 需要自己准备签名证书（自签证书需装描述文件，有一定门槛） |
+| `upstream` | 纯上游镜像，快进到上游最新 release tag | 不构建 |
+| `dev` | 上游 + 二开 patch；sync.yml 每日跟进上游，冲突自动开 issue | push 即发 `vX.Y.Z-dev.N`（prerelease），真机验证装它 |
+| `main` | dev 验证通过后合入 | 发正式 `vX.Y.Z`（覆盖式） |
 
-> 注意：签名时**不能改 bundle id** 也能装；改 id 也可以，但更新时要保持一致。
-> 免费 Apple ID 的 7 天限制是苹果策略，与本仓库无关。
+Release 流水线：`meta → web（全量前端测试 + 共享移动 Web 包）→ iOS ∥ Android → 发 Release`。iOS 走无签名 `xcodebuild archive`；Android Gradle 产物 zipalign + `ci/android-release.keystore` 签名（keystore 已入库，换钥匙会导致老用户无法覆盖安装）。
 
-## 更新策略
+## 二开内容（patch 都在干净 commit 里，随时可向上游发 PR）
 
-- 每天定时（UTC 07:13）检查上游最新 Release，发现新版本自动构建并发一个同名 tag 的 Release。
-- 也可在 Actions 页面手动 **Run workflow**：可指定任意上游 tag / 分支（如 `main`），
-  `force` 选项可强制重建已发布版本的产物。
-- 上游是活跃项目，APK/IPA 每次都是全新完整包，覆盖安装不丢数据。
+1. `media-origin.js` + `exercises.js`：演示媒体基址改为**运行时解析**——配对谁就拉谁，断开回退默认，包与服务器地址解耦（媒体在站点根，与上游 `normalizeServerUrl` 语义一致）。
+2. `api.js`：`setRemoteAuth` 单点挂钩（配对/续期/断开/开机恢复四条路径的咽喉），换服务器顺带清空旧媒体缓存。
+3. `sw.js`：媒体缓存上限 150MB/3000 项 → **30MB/4096 项**，跨源记账估算 64KB→24KB（贴近真实单价，上限名实相符）；LRU 淘汰机制沿用上游。
+4. 构建不 stage 媒体（未配对时 `Media.jsx` 现成降级链兜底：动画→静图→占位块+点击重试，不会出现常驻碎图）。
 
-## 构建步骤（workflow 里实际执行的命令）
+## 许可证
+
+本仓库整体为 **AGPL-3.0**（上游源码 + 我们的衍生修改与 CI）；Android keystore 刻意开源。与 openGym 官方无隶属关系；App 本身的问题请先到[上游 issues](https://github.com/DuarteSantos8/openGym/issues) 核对。
+
+## 本地开发
 
 ```sh
-cd frontend
-npm ci                      # Node 22
-npm run build:mobile        # VITE_MOBILE=1 vite build + cap sync（含 pod install）
-cd ios/App
-xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
-  -destination 'generic/platform=iOS' -archivePath build/App.xcarchive \
-  MARKETING_VERSION=<ver> CURRENT_PROJECT_VERSION=<build> \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive
-# App.app 放入 Payload/ 目录压缩即得 .ipa
+cd frontend && npm ci && npm test        # vitest（媒体改动相关的钉测试：sw-media / media-prefetch / api-base / clip-ext）
+VITE_MOBILE=1 npx vite build && npx cap sync   # lite Web 包
 ```
 
-与上游 `.gitlab-ci.yml` 中 `build:ios` 任务一一对应。
-
-## 许可与声明
-
-- IPA 里的一切来自上游 openGym（AGPL-3.0，见上游 [LICENSE](https://github.com/DuarteSantos8/openGym/blob/main/LICENSE)）；本仓库的构建脚本与文档为 MIT（见 [LICENSE](LICENSE)）。
-- 本仓库是第三方自动构建，与 openGym 官方无隶属关系；使用中遇到 App 本身的问题请先查[上游 issues](https://github.com/DuarteSantos8/openGym/issues)。
-- 官方 iOS 替代方案提醒：如果你本来就自建服务器，Safari「添加到主屏幕」的 PWA 也是完整可用的（免签名、不过期），见上游文档。
+上游同步：`sync.yml` 每日执行 `git merge -X ours`（我们的 README/LICENSE 恒胜）；patch 触点漂移时人工按 issue 提示合并。

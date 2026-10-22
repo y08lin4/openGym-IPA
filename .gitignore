@@ -1,5 +1,36 @@
-# 只存放仓库本地产物；构建全部发生在上游源码的临时签出目录中
-.DS_Store
-*.log
+# Exercise media downloaded by installs before v1.4.0 (now in catalogue/media); kept ignored so an
+# old folder never gets committed by accident
+media/img/
+media/gif/
 
+# Runtime data — users, passkeys, per-user state, session secret
+data/
+
+# Local config
+.env
+
+# Build output / deps
+frontend/dist/
+node_modules/
+*.log
+.DS_Store
+node_modules
+.claude/
+.agents/
+.superpowers/
+
+# Nix build result symlinks
+result
+result-*
+
+# CI reports (test:* jobs write these next to the suites)
+junit.xml
+coverage/
+frontend/bundle-size.json
+
+# Local planning notes
+docs/superpowers/plans/
+
+# openGym-lite 本地临时`node_modules/
+frontend/dist/
 .analysis/
