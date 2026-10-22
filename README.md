@@ -28,7 +28,7 @@
 |---|---|---|
 | `upstream` | 纯上游镜像，快进到上游最新 release tag | 不构建 |
 | `dev` | 上游 + 二开 patch；sync.yml 每日跟进上游，冲突自动开 issue | push 即发 `vX.Y.Z-dev.N`（prerelease），真机验证装它 |
-| `main` | dev 验证通过后合入 | 发正式 `vX.Y.Z`（覆盖式） |
+| `main` | dev 验证通过后合入 | 发正式 `vX.Y.Z-lite`（覆盖式；`-lite` 后缀避免与早期全量 Release 的 tag 相撞） |
 
 Release 流水线：`meta → web（全量前端测试 + 共享移动 Web 包）→ iOS ∥ Android → 发 Release`。iOS 走无签名 `xcodebuild archive`；Android Gradle 产物 zipalign + `ci/android-release.keystore` 签名（keystore 已入库，换钥匙会导致老用户无法覆盖安装）。
 

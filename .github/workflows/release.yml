@@ -33,7 +33,7 @@ jobs:
           BUILD="$(sed -n 's/^ *versionCode \([0-9]*\).*/\1/p' frontend/android/app/build.gradle | sed -n 1p)"
           CHANNEL="${GITHUB_REF_NAME}"
           if [ "$CHANNEL" = "main" ]; then
-            TAG="v$VER"; PRE=false
+            TAG="v$VER-lite"; PRE=false
           else
             TAG="v$VER-dev.$GITHUB_RUN_NUMBER"; PRE=true
           fi
@@ -152,6 +152,7 @@ jobs:
             --out "openGym-${TAG#v}-android.apk" aligned.apk
           "$BT/$V/apksigner" verify --print-certs "openGym-${TAG#v}-android.apk" | head -5
           sha256sum "openGym-${TAG#v}-android.apk" > "openGym-${TAG#v}-android.apk.sha256"
+          rm -f *.idsig
           ls -l openGym-*.apk
         env:
           TAG: ${{ needs.meta.outputs.tag }}
