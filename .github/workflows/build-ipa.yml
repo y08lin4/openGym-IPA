@@ -17,6 +17,11 @@ on:
         required: false
         type: boolean
         default: false
+      media_server:
+        description: 非空则额外构建 lite 版 IPA（不打包媒体，演示媒体指向该地址拉取，如 https://gym.example.com；留空用仓库变量 LITE_MEDIA_SERVER，都没有则不构建 lite）
+        required: false
+        type: string
+        default: ""
       prerelease:
         description: 把 GitHub Release 标记为预发布
         required: false
@@ -42,12 +47,14 @@ jobs:
       release_tag: ${{ steps.plan.outputs.release_tag }}
       source_label: ${{ steps.plan.outputs.source_label }}
       reason: ${{ steps.plan.outputs.reason }}
+      lite_server: ${{ steps.plan.outputs.lite_server }}
     steps:
       - name: 计算要构建的 ref 与发布 tag
         id: plan
         env:
           INPUT_REF: ${{ github.event.inputs.ref }}
           FORCE: ${{ github.event.inputs.force }}
+          INPUT_MEDIA: ${{ github.event.inputs.media_server }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -71,6 +78,13 @@ jobs:
             *)  RELEASE_TAG="$REF-$SHORT" ;;
           esac
           SOURCE_LABEL="${REF}（${SHORT}）"
+          # lite 版媒体地址：手动输入优先，其次仓库变量 LITE_MEDIA_SERVER
+          MEDIA_IN=$(printf '%s' "$INPUT_MEDIA" | tr -d " \t\r'\"")
+          LITE_VAR=$(api "$API/repos/$REPO/actions/variables/LITE_MEDIA_SERVER" 2>/dev/null | jq -r '.value // empty' || true)
+          LITE="${MEDIA_IN:-$LITE_VAR}"
+          LITE="${LITE%/}"
+          echo "lite_server=$LITE" >> "$GITHUB_OUTPUT"
+          [ -n "$LITE" ] && echo "将同时构建 lite 版，媒体指向: $LITE" || echo "本次不构建 lite 版"
           CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "User-Agent: openGym-IPA" "${AUTH[@]}" "$API/repos/$REPO/releases/tags/$RELEASE_TAG")
           if [ "$CODE" = "200" ]; then
             if [ "$FORCE" = "true" ]; then
@@ -100,6 +114,7 @@ jobs:
     env:
       UPSTREAM_REF: ${{ needs.check.outputs.sha }}
       SOURCE_LABEL: ${{ needs.check.outputs.source_label }}
+      LITE_SERVER: ${{ needs.check.outputs.lite_server }}
     steps:
       - name: 签出上游 openGym
         uses: actions/checkout@v4
@@ -149,6 +164,45 @@ jobs:
           shasum -a 256 "openGym-$MARKETING_VERSION-unsigned.ipa" > "openGym-$MARKETING_VERSION-unsigned.ipa.sha256"
           cat "openGym-$MARKETING_VERSION-unsigned.ipa.sha256"
 
+      # ---------- lite 版：同一套工程，媒体不打入，URL 指向自建服务器 ----------
+
+      - name: lite 构建 Web 包（媒体外置，不打入包内）
+        if: env.LITE_SERVER != ''
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          export VITE_MOBILE=1
+          export VITE_IMG_BASE="${LITE_SERVER}/exercise-media/still/"
+          export VITE_GIF_BASE="${LITE_SERVER}/exercise-media/clip/"
+          rm -rf dist
+          npx vite build
+          # 不调 stage-media：dist 里没有 exercise-media
+          npx cap sync ios
+
+      - name: lite xcodebuild 归档（复用 DerivedData，无签名）
+        if: env.LITE_SERVER != ''
+        working-directory: frontend/ios/App
+        run: |
+          set -euo pipefail
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/App-lite.xcarchive" \
+            MARKETING_VERSION="$MARKETING_VERSION" CURRENT_PROJECT_VERSION="$CURRENT_PROJECT_VERSION" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            archive | tail -40
+
+      - name: 打包 lite IPA + sha256
+        if: env.LITE_SERVER != ''
+        run: |
+          set -euo pipefail
+          cd frontend/ios/App
+          rm -rf Payload && mkdir Payload
+          cp -R build/App-lite.xcarchive/Products/Applications/App.app Payload/
+          zip -qry "$GITHUB_WORKSPACE/openGym-$MARKETING_VERSION-lite.ipa" Payload
+          cd "$GITHUB_WORKSPACE"
+          shasum -a 256 "openGym-$MARKETING_VERSION-lite.ipa" > "openGym-$MARKETING_VERSION-lite.ipa.sha256"
+          ls -l openGym-*.ipa | awk '{print $9, $5}'
+
       - name: 生成 Release 说明
         env:
           SHA: ${{ needs.check.outputs.sha }}
@@ -174,6 +228,14 @@ jobs:
 
           > 本仓库与 openGym 官方无关，只是把上游 iOS 构建搬到 GitHub Actions 上。
           EOF
+          if [ -n "${LITE_SERVER:-}" ]; then
+            cat >> release-body.md <<EOF
+
+          ---
+
+          **openGym-${MARKETING_VERSION}-lite.ipa（媒体外置精简版，约 10MB）**：包里不含 6554 个动作演示媒体，运行时从 ${LITE_SERVER} 按需拉取并由 Service Worker 缓存（课表内的动作会预取，看过即离线可用）。适合**连接自建服务器**使用的场景；如果你只用本地模式（不连服务器），请下载上面的完整版。媒体由 openGym 官方服务器镜像自带，无需额外部署。
+          EOF
+          fi
 
       - name: 发布 GitHub Release
         uses: softprops/action-gh-release@v2
@@ -185,6 +247,8 @@ jobs:
           files: |
             openGym-*-unsigned.ipa
             openGym-*-unsigned.ipa.sha256
+            openGym-*-lite.ipa
+            openGym-*-lite.ipa.sha256
           overwrite_files: true
 
       - name: 同时保留为 workflow 产物
@@ -194,4 +258,6 @@ jobs:
           path: |
             openGym-*-unsigned.ipa
             openGym-*-unsigned.ipa.sha256
+            openGym-*-lite.ipa
+            openGym-*-lite.ipa.sha256
           retention-days: 30
