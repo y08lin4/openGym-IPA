@@ -42,7 +42,7 @@ function worker(all = new Map()) {
     env.ranges.push(typeof req === 'string' ? '' : req.headers?.get('range') || '')
     if (!env.net.up) throw new TypeError('Failed to fetch')
     if (env.net.answer) return env.net.answer(url)
-    return new Response('GIF89a' + url, { status: 200, headers: { 'content-type': 'image/gif', 'content-length': String(40 * 1024 * 1024) } })
+    return new Response('GIF89a' + url, { status: 200, headers: { 'content-type': 'image/gif', 'content-length': String(8 * 1024 * 1024) } })
   }
   const self = { addEventListener: (t, f) => { handlers[t] = f }, skipWaiting: () => {}, clients: { claim: async () => {} }, registration: {} }
   new Function('self', 'caches', 'fetch', 'location', SW)(self, caches, fetch, new URL(ORIGIN + '/sw.js'))
@@ -137,7 +137,7 @@ describe('sw.js exercise media', () => {
 
   it('stays under its cap, dropping the least recently used first', async () => {
     const first = worker()
-    // 40 MB each by Content-Length: the cap (150 MB) holds three of them.
+    // 8 MB each by Content-Length: the cap (30 MB) holds three of them.
     for (const n of [1, 2, 3]) await first.get(`/gif/${n}.gif`)
     // A later worker that shows the oldest again moves it to the back of the line, once.
     const w = worker(first.all)
@@ -146,7 +146,7 @@ describe('sw.js exercise media', () => {
     expect(w.media().urls().map(u => u.slice(-5))).toEqual(['2.gif', '3.gif', '1.gif'])
     expect(w.fetched).toEqual([])   // both from the cache
     // Trimming runs every twentieth new entry this worker writes; small ones fill the gap.
-    w.net.answer = url => new Response('x', { headers: { 'content-type': 'image/jpeg', 'content-length': url.includes('/img/') ? '1024' : String(40 * 1024 * 1024) } })
+    w.net.answer = url => new Response('x', { headers: { 'content-type': 'image/jpeg', 'content-length': url.includes('/img/') ? '1024' : String(8 * 1024 * 1024) } })
     await w.get('/gif/4.gif')
     for (let i = 0; i < 19; i++) await w.get(`/img/${i}.jpg`)
     const left = w.media().urls().map(u => u.slice(u.lastIndexOf('/') + 1))

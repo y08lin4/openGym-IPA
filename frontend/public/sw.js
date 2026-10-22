@@ -20,16 +20,19 @@ const DEVICE_URL = '/opengym-device-id'
    Content-Length) the least recently used entries go first. The Cache API keeps entries in the
    order they were written, so a hit is written back once per worker lifetime to move it to the
    end: least recently used as far as this worker has seen, which is what "LRU-ish" means here.
-   The whole catalogue is about 100 MB of stills and clips, so the cap only bites for someone who has browsed most of
-   it. lib/media-prefetch.js fills this cache ahead for the exercises in the plan — in the app
+   The whole catalogue is about 100 MB of stills and clips. This fork caps the cache well under
+   that on purpose: a device should keep the exercises it actually opens — a plan's worth, plus
+   the browsing around it — rather than slowly house the entire library and evict the build's own
+   shell files beside it. lib/media-prefetch.js fills this cache ahead for the exercises in the plan — in the app
    installed on the home screen only; a browser tab gets what it has shown and nothing more — and
    names it too, so a new name has to change there as well (sw-media.test.js pins the two
    together). */
 const MEDIA = 'opengym-media-v1'
-const MEDIA_MAX_BYTES = 150 * 1024 * 1024
-const MEDIA_MAX_ITEMS = 3000
-// What an entry without a Content-Length is counted as: a little above the catalogue's average.
-const MEDIA_GUESS_BYTES = 64 * 1024
+const MEDIA_MAX_BYTES = 30 * 1024 * 1024
+const MEDIA_MAX_ITEMS = 4096
+// What an entry without a Content-Length is counted as: above a still, under the catalogue's
+// average clip. At this cap an over-guess evicts too eagerly rather than overflowing the cache.
+const MEDIA_GUESS_BYTES = 24 * 1024
 // Trimming lists the whole cache, so it runs after every MEDIA_TRIM_EVERY new entries rather
 // than after each one, and once when a new worker activates.
 const MEDIA_TRIM_EVERY = 20
