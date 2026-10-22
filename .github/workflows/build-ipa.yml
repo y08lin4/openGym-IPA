@@ -46,12 +46,13 @@ jobs:
       - name: 计算要构建的 ref 与发布 tag
         id: plan
         env:
-          # gh 自动回退使用 runner 内置的 GITHUB_TOKEN，无需显式设置 GH_TOKEN
           INPUT_REF: ${{ github.event.inputs.ref }}
           FORCE: ${{ github.event.inputs.force }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # Actions 里的 gh 必须显式 GH_TOKEN；用 runner 自带的 GITHUB_TOKEN 赋值
+          export GH_TOKEN="$GITHUB_TOKEN"
           # git ref 不含空白和引号，直接全部去掉（容错手动输入的引号/空格）
           REF=$(printf '%s' "$INPUT_REF" | tr -d " \t\r'\"")
           if [ -z "$REF" ]; then
