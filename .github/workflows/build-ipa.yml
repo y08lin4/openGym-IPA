@@ -70,7 +70,7 @@ jobs:
             v*) RELEASE_TAG="$REF" ;;
             *)  RELEASE_TAG="$REF-$SHORT" ;;
           esac
-          SOURCE_LABEL="$REF（$SHORT）"
+          SOURCE_LABEL="${REF}（${SHORT}）"
           CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "User-Agent: openGym-IPA" "${AUTH[@]}" "$API/repos/$REPO/releases/tags/$RELEASE_TAG")
           if [ "$CODE" = "200" ]; then
             if [ "$FORCE" = "true" ]; then
@@ -157,9 +157,9 @@ jobs:
           set -euo pipefail
           UP="https://github.com/DuarteSantos8/openGym"
           cat > release-body.md <<EOF
-          本 Release 由 GitHub Actions 自动构建：源码为上游 [$SOURCE_LABEL]($UP/tree/$SHA)，构建方法与上游 \`.gitlab-ci.yml\` 的 \`build:ios\` 任务一致。
+          本 Release 由 GitHub Actions 自动构建：源码为上游 [${SOURCE_LABEL}](${UP}/tree/${SHA})，构建方法与上游 \`.gitlab-ci.yml\` 的 \`build:ios\` 任务一致。
 
-          **openGym-$MARKETING_VERSION-unsigned.ipa 是未签名 IPA**，不能直接双击安装，请先用以下任一方式签名（均为免费方案，详见本仓库 [README](https://github.com/$GITHUB_REPOSITORY/blob/main/README.md#安装方法)）：
+          **openGym-${MARKETING_VERSION}-unsigned.ipa 是未签名 IPA**，不能直接双击安装，请先用以下任一方式签名（均为免费方案，详见本仓库 [README](https://github.com/${GITHUB_REPOSITORY}/blob/main/README.md#安装方法)）：
 
           - **AltStore / AltServer**、**Sideloadly**：用你自己的免费 Apple ID 签名安装（7 天有效，需定期刷新）
           - **TrollStore**（受限 iOS 版本）：免签名直接安装，永久有效
@@ -167,9 +167,9 @@ jobs:
 
           应用安装后有两种模式：**本地模式**（免注册，数据在手机端）或连接你自己的 openGym 服务器（在已登录的浏览器里 设置 → 账户 → 「配对手持设备」生成一次性配对码，应用内输入服务器地址和配对码即可，应用内不需要 passkey）。
 
-          - 上游版本：$SOURCE_LABEL（commit \`$SHA\`）
-          - 校验：\`sha256sum -c openGym-$MARKETING_VERSION-unsigned.ipa.sha256\`
-          - 上游构建：v$MARKETING_VERSION，build $CURRENT_PROJECT_VERSION；bundle id \`ch.duartesantos.opengym\`
+          - 上游版本：${SOURCE_LABEL}（commit \`${SHA}\`）
+          - 校验：\`sha256sum -c openGym-${MARKETING_VERSION}-unsigned.ipa.sha256\`
+          - 上游构建：v${MARKETING_VERSION}，build ${CURRENT_PROJECT_VERSION}；bundle id \`ch.duartesantos.opengym\`
           - 上游代码许可证：AGPL-3.0
 
           > 本仓库与 openGym 官方无关，只是把上游 iOS 构建搬到 GitHub Actions 上。
