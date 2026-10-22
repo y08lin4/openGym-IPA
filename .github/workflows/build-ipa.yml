@@ -46,7 +46,7 @@ jobs:
       - name: 计算要构建的 ref 与发布 tag
         id: plan
         env:
-          GH_TOKEN: *** github.token }}
+          # gh 自动回退使用 runner 内置的 GITHUB_TOKEN，无需显式设置 GH_TOKEN
           INPUT_REF: ${{ github.event.inputs.ref }}
           FORCE: ${{ github.event.inputs.force }}
           REPO: ${{ github.repository }}
