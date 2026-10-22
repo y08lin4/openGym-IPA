@@ -80,12 +80,16 @@ jobs:
         with: { name: web-dist, path: frontend/dist }
       - name: CocoaPods
         run: command -v pod >/dev/null 2>&1 || brew install cocoapods
-      - name: 同步进 iOS 工程并归档（无签名）
+      - name: 装依赖并同步进 iOS 工程
         working-directory: frontend
         run: |
           set -euo pipefail
+          npm ci --no-audit --no-fund
           npx cap sync ios
-          cd ios/App
+      - name: xcodebuild 归档（无签名）
+        working-directory: frontend/ios/App
+        run: |
+          set -euo pipefail
           xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$PWD/build/App.xcarchive" \
