@@ -52,8 +52,8 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          REF="${INPUT_REF#"${INPUT_REF%%[![:space:]]*}"}"   # 去首尾空白
-          REF="${REF#"'}"; REF="${REF%'"}"
+          # git ref 不含空白和引号，直接全部去掉（容错手动输入的引号/空格）
+          REF=$(printf '%s' "$INPUT_REF" | tr -d " \t\r'\"")
           if [ -z "$REF" ]; then
             REF=$(gh api repos/DuarteSantos8/openGym/releases/latest --jq .tag_name)
             echo "未指定 ref，使用上游最新 Release: $REF"
