@@ -51,22 +51,28 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Actions 里的 gh 必须显式 GH_TOKEN；用 runner 自带的 GITHUB_TOKEN 赋值
-          export GH_TOKEN="$GITHUB_TOKEN"
+          API="https://api.github.com"
+          # 有 token 就用（提升限流额度），没有就匿名访问（两个仓库都是公开的）
+          AUTH=()
+          if [ -n "${GITHUB_TOKEN:-}" ]; then
+            AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+          fi
+          api() { curl -fsS -H "User-Agent: openGym-IPA" "${AUTH[@]}" "$1"; }
           # git ref 不含空白和引号，直接全部去掉（容错手动输入的引号/空格）
           REF=$(printf '%s' "$INPUT_REF" | tr -d " \t\r'\"")
           if [ -z "$REF" ]; then
-            REF=$(gh api repos/DuarteSantos8/openGym/releases/latest --jq .tag_name)
+            REF=$(api "$API/repos/DuarteSantos8/openGym/releases/latest" | jq -r .tag_name)
             echo "未指定 ref，使用上游最新 Release: $REF"
           fi
-          SHA=$(gh api "repos/DuarteSantos8/openGym/commits/$REF" --jq .sha)
+          SHA=$(api "$API/repos/DuarteSantos8/openGym/commits/$REF" | jq -r .sha)
           SHORT="${SHA:0:7}"
           case "$REF" in
             v*) RELEASE_TAG="$REF" ;;
             *)  RELEASE_TAG="$REF-$SHORT" ;;
           esac
           SOURCE_LABEL="$REF（$SHORT）"
-          if gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1; then
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "User-Agent: openGym-IPA" "${AUTH[@]}" "$API/repos/$REPO/releases/tags/$RELEASE_TAG")
+          if [ "$CODE" = "200" ]; then
             if [ "$FORCE" = "true" ]; then
               echo "Release $RELEASE_TAG 已存在，但 force=true，继续构建并覆盖产物"
             else
