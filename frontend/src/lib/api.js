@@ -3,6 +3,7 @@ import { t } from './i18n-core.js'
 import { MOBILE } from './mobile.js'
 import { appBase } from './app-base.js'
 import { nativeFetch } from './capacitor-fetch.js'
+import { setMediaOrigin } from './media-origin.js' // openGym-lite: the paired server also serves the media
 
 export const IS_APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)
 export const IS_ANDROID = /Android/.test(navigator.userAgent)
@@ -23,7 +24,17 @@ export const webauthnOK = () => typeof window.PublicKeyCredential !== 'undefined
 // same-origin cookies, so remoteBase/remoteToken stay empty and api() behaves exactly as before.
 let remoteBase = ''
 let remoteToken = null
-export function setRemoteAuth(base, token) { remoteBase = base || ''; remoteToken = token || null }
+// The pairing also says where the exercise media are served from (openGym-lite,
+// lib/media-origin.js): the base is recorded as an origin, and a base that parses as no URL
+// at all is as good as no server. remote.js hands us an origin already (normalizeServerUrl),
+// a token renewal re-passes the same one and changes nothing, and forgetRemote() — the
+// "Disconnect" in Settings/server-sync and its store action — clears both. setAccessHeaders
+// is deliberately not wired: it authenticates the app's own origin, not a media server, and
+// its CF-Access refresh would needlessly drop the media cache every time it runs.
+export function setRemoteAuth(base, token) {
+  remoteBase = base || ''; remoteToken = token || null
+  setMediaOrigin(remoteBase ? originOf(remoteBase) : '')
+}
 // A Cloudflare Access service token (lib/cf-access.js): sent only to the origin it was entered
 // for, never on a same-origin request, where the browser's own Access session cookie already
 // does the job, and never to a server that merely happens to be paired or typed in.
