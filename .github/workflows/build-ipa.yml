@@ -117,13 +117,13 @@ jobs:
       LITE_SERVER: ${{ needs.check.outputs.lite_server }}
     steps:
       - name: 签出上游 openGym
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: DuarteSantos8/openGym
           ref: ${{ env.UPSTREAM_REF }}
 
       - name: 配置 Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -238,7 +238,7 @@ jobs:
           fi
 
       - name: 发布 GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.check.outputs.release_tag }}
           name: openGym ${{ needs.check.outputs.release_tag }}（未签名 IPA）
@@ -252,7 +252,7 @@ jobs:
           overwrite_files: true
 
       - name: 同时保留为 workflow 产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openGym-${{ env.MARKETING_VERSION }}-unsigned-ipa
           path: |
